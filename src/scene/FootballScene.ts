@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PlayerTokens } from './PlayerTokens';
 import { Menu } from './Menu';
+import { AnnotationTools } from './AnnotationTools';
 import parquetTextureUrl from '../assets/parquet.jpg';
 
 const COURT_WIDTH = 28;
@@ -17,6 +18,7 @@ export class BasketballScene {
   private readonly controls: OrbitControls;
   private readonly playerTokens: PlayerTokens;
   private readonly menu: Menu;
+  private readonly annotations: AnnotationTools;
   private court?: THREE.Mesh;
   private introParallaxEnabled = true;
   private readonly parallaxTarget = new THREE.Vector3();
@@ -58,6 +60,8 @@ export class BasketballScene {
     this.playerTokens = new PlayerTokens(root, this.camera, this.renderer.domElement, this.court, this.controls);
     this.scene.add(this.playerTokens.object);
     this.menu = new Menu(root, this.playerTokens);
+    this.annotations = new AnnotationTools(root, this.camera, this.renderer.domElement, this.court, this.controls, this.playerTokens);
+    this.scene.add(this.annotations.object);
     this.addPerimeter();
     this.addAtmosphere();
     window.addEventListener('resize', this.handleResize);
@@ -90,6 +94,7 @@ export class BasketballScene {
     this.controls.dispose();
     this.playerTokens.dispose();
     this.menu.dispose();
+    this.annotations.dispose();
     this.renderer.dispose();
   }
 

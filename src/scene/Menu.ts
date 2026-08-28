@@ -14,7 +14,6 @@ export class Menu {
 	private readonly list: HTMLDivElement;
 	private readonly form: HTMLFormElement;
 	private readonly openButton: HTMLButtonElement;
-	private readonly closeButton: HTMLButtonElement;
 	private editingId?: string;
 
 	constructor(root: HTMLElement, players: PlayerTokens) {
@@ -41,19 +40,10 @@ export class Menu {
 		this.openButton.textContent = 'ROSTER';
 		this.openButton.setAttribute('aria-label', 'Abrir panel de jugadores');
 		this.openButton.addEventListener('click', () => {
-			this.panel.classList.remove('is-hidden');
-			this.closeButton.classList.remove('is-hidden');
+			const isOpen = !this.panel.classList.contains('is-hidden');
+			this.panel.classList.toggle('is-hidden', isOpen);
 		});
-		this.closeButton = document.createElement('button');
-		this.closeButton.className = 'menu-close is-hidden';
-		this.closeButton.type = 'button';
-		this.closeButton.textContent = '×';
-		this.closeButton.setAttribute('aria-label', 'Cerrar panel');
-		this.closeButton.addEventListener('click', () => {
-			this.panel.classList.add('is-hidden');
-			this.closeButton.classList.add('is-hidden');
-		});
-		menuControls.append(this.openButton, this.closeButton);
+		menuControls.append(this.openButton);
 		root.appendChild(menuControls);
 		this.list = this.panel.querySelector('.player-list') as HTMLDivElement;
 		this.form = this.panel.querySelector('form') as HTMLFormElement;
@@ -64,7 +54,6 @@ export class Menu {
 
 	public setIntroVisible(isIntroVisible: boolean): void {
 		this.openButton.classList.toggle('is-intro-hidden', isIntroVisible);
-		this.closeButton.classList.add('is-hidden');
 		if (isIntroVisible) this.panel.classList.add('is-hidden');
 	}
 

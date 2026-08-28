@@ -68,6 +68,10 @@ export class PlayerTokens {
     return [...this.tokens.values()].map(({ player }) => player);
   }
 
+  public get records(): TokenRecord[] {
+    return [...this.tokens.values()];
+  }
+
   public addPlayer(player: PlayerState): void {
     if (this.tokens.has(player.id)) return;
     this.createPlayer(player);
@@ -203,6 +207,7 @@ export class PlayerTokens {
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
+    if (this.domElement.classList.contains('is-annotating')) return;
     this.setPointer(event);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const intersections = this.raycaster.intersectObjects([...this.tokens.values()].map((record) => record.mesh));
