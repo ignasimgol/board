@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PlayerTokens } from './PlayerTokens';
+import { Menu } from './Menu';
 import parquetTextureUrl from '../assets/parquet.jpg';
 
 const COURT_WIDTH = 28;
@@ -15,7 +16,11 @@ export class BasketballScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly controls: OrbitControls;
   private readonly playerTokens: PlayerTokens;
+  private readonly menu: Menu;
   private court?: THREE.Mesh;
+  private introParallaxEnabled = true;
+  private readonly parallaxTarget = new THREE.Vector3();
+  private readonly parallaxOffset = new THREE.Vector3();
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -52,6 +57,7 @@ export class BasketballScene {
     if (!this.court) throw new Error('Court mesh was not created.');
     this.playerTokens = new PlayerTokens(root, this.camera, this.renderer.domElement, this.court, this.controls);
     this.scene.add(this.playerTokens.object);
+    this.menu = new Menu(root, this.playerTokens);
     this.addPerimeter();
     this.addAtmosphere();
     window.addEventListener('resize', this.handleResize);
@@ -59,10 +65,23 @@ export class BasketballScene {
 
   public start(): void {
     this.renderer.setAnimationLoop(() => {
+      this.parallaxOffset.lerp(this.parallaxTarget, 0.06);
+      this.scene.position.x = this.parallaxOffset.x;
+      this.scene.position.z = this.parallaxOffset.z;
       this.controls.update();
       this.playerTokens.updateLabels();
       this.renderer.render(this.scene, this.camera);
     });
+  }
+
+  public setIntroParallaxEnabled(enabled: boolean): void {
+    this.introParallaxEnabled = enabled;
+    if (!enabled) this.parallaxTarget.set(0, 0, 0);
+  }
+
+  public setIntroPointer(x: number, y: number): void {
+    if (!this.introParallaxEnabled) return;
+    this.parallaxTarget.set(x * 0.45, 0, y * 0.28);
   }
 
   public dispose(): void {
@@ -70,6 +89,7 @@ export class BasketballScene {
     this.renderer.setAnimationLoop(null);
     this.controls.dispose();
     this.playerTokens.dispose();
+    this.menu.dispose();
     this.renderer.dispose();
   }
 

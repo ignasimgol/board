@@ -9,12 +9,6 @@ const TOKEN_RADIUS = 0.42;
 const TOKEN_HEIGHT = 0.18;
 const TOKEN_Y = 0.18;
 
-const TEAM_COLORS: Record<Team, string> = {
-  home: '#e9f15a',
-  away: '#54c7d9',
-  goalkeeper: '#ff765b',
-};
-
 const INITIAL_PLAYERS: PlayerState[] = [
   { id: 'home-4', team: 'home', number: 4, name: 'MARTIN', position: { x: -4.8, y: TOKEN_Y, z: -3.6 } },
   { id: 'home-7', team: 'home', number: 7, name: 'SILVA', position: { x: -1.7, y: TOKEN_Y, z: -2.1 } },
@@ -28,7 +22,13 @@ const INITIAL_PLAYERS: PlayerState[] = [
   { id: 'away-24', team: 'away', number: 24, name: 'SMITH', position: { x: 5.1, y: TOKEN_Y, z: -5.0 } },
 ];
 
-type TokenRecord = {
+export const TEAM_COLORS: Record<Team, string> = {
+  home: '#e9f15a',
+  away: '#54c7d9',
+  goalkeeper: '#ff765b',
+};
+
+export type TokenRecord = {
   player: PlayerState;
   mesh: THREE.Mesh;
   label: HTMLDivElement;
@@ -64,10 +64,52 @@ export class PlayerTokens {
     return this.tokenGroup;
   }
 
+  public get players(): PlayerState[] {
+    return [...this.tokens.values()].map(({ player }) => player);
+  }
+
+  public addPlayer(player: PlayerState): void {
+    if (this.tokens.has(player.id)) return;
+    this.createPlayer(player);
+  }
+
+  public updatePlayer(id: string, changes: Pick<PlayerState, 'name' | 'number' | 'team'>): void {
+    const record = this.tokens.get(id);
+    if (!record) return;
+    record.player.name = changes.name;
+    record.player.number = changes.number;
+    record.player.team = changes.team;
+    const nextTexture = this.createFaceTexture(record.player);
+    const materials = record.mesh.material as THREE.Material[];
+    const faceMaterial = materials[1] as THREE.MeshBasicMaterial;
+    faceMaterial.map?.dispose();
+    faceMaterial.map = nextTexture;
+    faceMaterial.needsUpdate = true;
+    record.faceTexture = nextTexture;
+    record.label.className = `player-label player-label--${changes.team}`;
+    record.label.querySelector('strong')!.textContent = String(changes.number);
+    record.label.querySelector('span')!.textContent = changes.name;
+    (materials[0] as THREE.MeshStandardMaterial).color.set(TEAM_COLORS[changes.team]);
+    (materials[0] as THREE.MeshStandardMaterial).emissive.set(TEAM_COLORS[changes.team]);
+  }
+
+  public removePlayer(id: string): void {
+    const record = this.tokens.get(id);
+    if (!record) return;
+    this.tokenGroup.remove(record.mesh);
+    record.mesh.geometry.dispose();
+    (record.mesh.material as THREE.Material[]).forEach((material) => material.dispose());
+    record.faceTexture.dispose();
+    record.label.remove();
+    this.tokens.delete(id);
+  }
+
   public updateLabels(): void {
     const rootBounds = this.root.getBoundingClientRect();
     for (const record of this.tokens.values()) {
-      const projected = record.mesh.position.clone().add(new THREE.Vector3(0, TOKEN_HEIGHT, 0)).project(this.camera);
+      const labelPosition = new THREE.Vector3();
+      record.mesh.getWorldPosition(labelPosition).y += TOKEN_HEIGHT;
+      const projected = labelPosition.project(this.camera);
       const x = (projected.x * 0.5 + 0.5) * rootBounds.width;
       const y = (-projected.y * 0.5 + 0.5) * rootBounds.height;
       const visible = projected.z > -1 && projected.z < 1;
@@ -90,7 +132,7 @@ export class PlayerTokens {
     }
   }
 
-  private addPlayer(player: PlayerState): void {
+  private createPlayer(player: PlayerState): void {
     const sideMaterial = new THREE.MeshStandardMaterial({
       color: TEAM_COLORS[player.team],
       roughness: 0.38,
