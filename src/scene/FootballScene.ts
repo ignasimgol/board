@@ -186,19 +186,133 @@ export class BasketballScene {
   }
 
   private addBasket(end: number): void {
-    const frameMaterial = new THREE.MeshStandardMaterial({ color: '#d7ded7', metalness: 0.75, roughness: 0.3 });
-    const hoopMaterial = new THREE.MeshStandardMaterial({ color: '#e05832', metalness: 0.35, roughness: 0.4 });
-    const x = end * (COURT_WIDTH / 2 - 0.9);
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.2, 12), frameMaterial);
-    pole.position.set(end * (COURT_WIDTH / 2 + 0.25), 1.6, 0);
-    this.scene.add(pole);
-    const backboard = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.8, 2), new THREE.MeshStandardMaterial({ color: '#f1f2e9', transparent: true, opacity: 0.88 }));
-    backboard.position.set(x, 3.35, 0);
-    this.scene.add(backboard);
-    const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.055, 10, 24), hoopMaterial);
-    hoop.rotation.x = Math.PI / 2;
-    hoop.position.set(end * (COURT_WIDTH / 2 - 1.25), 3.05, 0);
-    this.scene.add(hoop);
+    // Grupo principal de la canasta para gestionar posicionamiento y rotación según el extremo de la cancha
+    const basketGroup = new THREE.Group();
+
+    // Materiales integrados con la estética de la escena
+    const poleMaterial = new THREE.MeshStandardMaterial({
+      color: '#1c2830',
+      roughness: 0.4,
+      metalness: 0.7,
+    });
+
+    const padMaterial = new THREE.MeshStandardMaterial({
+      color: '#c0392b',
+      roughness: 0.5,
+      metalness: 0.1,
+    });
+
+    const backboardFrameMaterial = new THREE.MeshStandardMaterial({
+      color: '#0f171c',
+      roughness: 0.3,
+      metalness: 0.8,
+    });
+
+    const glassMaterial = new THREE.MeshPhysicalMaterial({
+      color: '#877474',
+ 
+    });
+
+    const whiteLineMaterial = new THREE.MeshBasicMaterial({
+      color: '#ffffff',
+      side: THREE.DoubleSide,
+    });
+
+    const rimMaterial = new THREE.MeshStandardMaterial({
+      color: '#e67e22',
+      roughness: 0.3,
+      metalness: 0.4,
+    });
+
+    const netMaterial = new THREE.MeshStandardMaterial({
+      color: '#e6e6e6',
+      roughness: 0.9,
+      wireframe: true,
+      side: THREE.DoubleSide,
+    });
+
+    // --- 1. POSTE Y PROTECTOR ---
+    // Base del poste
+    const poleBase = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 3.2, 16), poleMaterial);
+    poleBase.position.set(0, 1.6, -0.6);
+    poleBase.castShadow = true;
+    poleBase.receiveShadow = true;
+    basketGroup.add(poleBase);
+
+    // Protector acolchado inferior
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 1.4, 16), padMaterial);
+    pad.position.set(0, 0.7, -0.6);
+    pad.castShadow = true;
+    basketGroup.add(pad);
+
+    // Brazo extensor diagonal hacia la cancha
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.5, 12), poleMaterial);
+    arm.rotation.x = Math.PI / 4;
+    arm.position.set(0, 2.9, -0.31);
+    arm.castShadow = true;
+    basketGroup.add(arm);
+
+    // --- 2. TABLERO Y MARCO ---
+    const backboardGroup = new THREE.Group();
+    backboardGroup.position.set(0, 3.35, 0.25);
+
+    // Cristal del tablero (orientado hacia Z+)
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.05, 0.04), glassMaterial);
+    glass.castShadow = true;
+    backboardGroup.add(glass);
+
+    // Marco posterior del tablero
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.84, 1.09, 0.02), backboardFrameMaterial);
+    frame.position.z = -0.02;
+    frame.castShadow = true;
+    backboardGroup.add(frame);
+
+    // Cuadro interior blanco de tiro
+    const innerSquare = new THREE.Mesh(new THREE.BoxGeometry(0.59, 0.45, 0.045), whiteLineMaterial);
+    innerSquare.position.set(0, -0.15, 0);
+    backboardGroup.add(innerSquare);
+
+    const innerCutout = new THREE.Mesh(new THREE.BoxGeometry(0.49, 0.35, 0.05), glassMaterial);
+    innerCutout.position.set(0, -0.15, 0);
+    backboardGroup.add(innerCutout);
+
+    basketGroup.add(backboardGroup);
+
+    // --- 3. ARO Y RED ---
+    const rimGroup = new THREE.Group();
+    rimGroup.position.set(0, 3.05, 0.27);
+
+    // Aro
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.02, 16, 32), rimMaterial);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.z = 0.25;
+    rim.castShadow = true;
+    rimGroup.add(rim);
+
+    // Soporte conector aro-tablero
+    const mount = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.08), rimMaterial);
+    mount.position.set(0, 0, 0.02);
+    rimGroup.add(mount);
+
+    // Red cónica en wireframe
+    const net = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.12, 0.45, 12, 6, true), netMaterial);
+    net.position.set(0, -0.225, 0.25);
+    rimGroup.add(net);
+
+    basketGroup.add(rimGroup);
+
+    // --- 4. UBICACIÓN Y ORIENTACIÓN SEGÚN EL EXTREMO (end: -1 o 1) ---
+    const posX = end * (COURT_WIDTH / 2 - 0.65);
+    basketGroup.position.set(posX, 0, 0);
+
+    // Orienta la canasta mirando hacia el centro de la pista según el lado en el que esté
+    if (end === 1) {
+      basketGroup.rotation.y = -Math.PI / 2;
+    } else {
+      basketGroup.rotation.y = Math.PI / 2;
+    }
+
+    this.scene.add(basketGroup);
   }
 
   private addPerimeter(): void {
@@ -215,11 +329,7 @@ export class BasketballScene {
       board.rotation.y = rotation;
       board.receiveShadow = true;
       this.scene.add(board);
-      for (let index = -2; index <= 2; index += 1) {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.2, 8), postsMaterial);
-        post.position.set(x + Math.cos(rotation) * index * 20, 1.6, z + Math.sin(rotation) * index * 20);
-        this.scene.add(post);
-      }
+    
     }
   }
 
