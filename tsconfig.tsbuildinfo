@@ -1,1 +1,1 @@
-{"root":["./src/main.ts","./src/types.ts","./src/scene/footballscene.ts"],"errors":true,"version":"5.9.3"}
+{"root":["./src/main.ts","./src/types.ts","./src/scene/footballscene.ts","./src/scene/playertokens.ts"],"version":"5.9.3"}

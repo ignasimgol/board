@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { PlayerTokens } from './PlayerTokens';
+import parquetTextureUrl from '../assets/parquet.jpg';
 
 const COURT_WIDTH = 28;
 const COURT_DEPTH = 15;
@@ -12,6 +14,8 @@ export class BasketballScene {
   private readonly camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
   private readonly renderer: THREE.WebGLRenderer;
   private readonly controls: OrbitControls;
+  private readonly playerTokens: PlayerTokens;
+  private court?: THREE.Mesh;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -45,6 +49,9 @@ export class BasketballScene {
     this.addLights();
     this.addGround();
     this.addCourt();
+    if (!this.court) throw new Error('Court mesh was not created.');
+    this.playerTokens = new PlayerTokens(root, this.camera, this.renderer.domElement, this.court, this.controls);
+    this.scene.add(this.playerTokens.object);
     this.addPerimeter();
     this.addAtmosphere();
     window.addEventListener('resize', this.handleResize);
@@ -53,6 +60,7 @@ export class BasketballScene {
   public start(): void {
     this.renderer.setAnimationLoop(() => {
       this.controls.update();
+      this.playerTokens.updateLabels();
       this.renderer.render(this.scene, this.camera);
     });
   }
@@ -61,6 +69,7 @@ export class BasketballScene {
     window.removeEventListener('resize', this.handleResize);
     this.renderer.setAnimationLoop(null);
     this.controls.dispose();
+    this.playerTokens.dispose();
     this.renderer.dispose();
   }
 
@@ -105,9 +114,15 @@ export class BasketballScene {
   }
 
   private addCourt(): void {
+    const parquetTexture = new THREE.TextureLoader().load(parquetTextureUrl);
+    parquetTexture.colorSpace = THREE.SRGBColorSpace;
+    parquetTexture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    parquetTexture.wrapS = THREE.ClampToEdgeWrapping;
+    parquetTexture.wrapT = THREE.ClampToEdgeWrapping;
     const field = new THREE.Mesh(
       new THREE.PlaneGeometry(COURT_WIDTH, COURT_DEPTH),
       new THREE.MeshStandardMaterial({
+        map: parquetTexture,
         color: '#c4864d',
         roughness: 0.72,
         metalness: 0,
@@ -117,6 +132,7 @@ export class BasketballScene {
     field.position.y = FIELD_Y;
     field.receiveShadow = true;
     this.scene.add(field);
+    this.court = field;
 
     const markings = new THREE.Group();
     const lineMaterial = new THREE.LineBasicMaterial({ color: '#e6f0d8', transparent: true, opacity: 0.92 });
