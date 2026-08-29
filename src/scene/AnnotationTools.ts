@@ -15,9 +15,9 @@ type AnnotationStyle = {
 };
 
 const ANNOTATION_STYLES: Record<AnnotationMode, AnnotationStyle> = {
+  cut: { label: 'CUT', color: 0xffffff, dashed: false, curved: false, arrow: true },
   dribble: { label: 'DRIBBLE', color: 0xd7f34a, dashed: false, curved: true, arrow: true },
   pass: { label: 'PASS', color: 0xffffff, dashed: true, curved: false, arrow: true },
-  cut: { label: 'CUT', color: 0xffffff, dashed: false, curved: false, arrow: true },
   screen: { label: 'SCREEN', color: 0xff765b, dashed: false, curved: false, arrow: false },
   shot: { label: 'SHOT', color: 0xff765b, dashed: true, curved: true, arrow: true },
   handoff: { label: 'HANDOFF', color: 0x54c7d9, dashed: false, curved: true, arrow: true },
@@ -88,7 +88,7 @@ export class AnnotationTools {
     title.textContent = 'ADD ACTIONS';
     toolbar.appendChild(title);
 
-    (Object.keys(ANNOTATION_STYLES) as AnnotationMode[]).forEach((mode) => {
+    (['cut', 'dribble', 'pass', 'screen', 'shot', 'handoff'] as AnnotationMode[]).forEach((mode) => {
       const button = document.createElement('button');
       button.className = 'annotation-button';
       button.type = 'button';
@@ -238,6 +238,11 @@ export class AnnotationTools {
     const line = this.createLine(start, end, style, false);
     line.userData.annotationGroup = group;
     group.add(line);
+    if (mode === 'screen') {
+      const cap = this.createScreenCap(start, end, style.color);
+      cap.userData.annotationGroup = group;
+      group.add(cap);
+    }
     if (style.arrow) {
       const points = style.curved ? this.createCurvePoints(start, end) : [start, end];
       const arrow = this.addArrow(end, points[points.length - 2], style.color);
@@ -245,6 +250,17 @@ export class AnnotationTools {
       group.add(arrow);
     }
     return group;
+  }
+
+  private createScreenCap(start: THREE.Vector3, end: THREE.Vector3, color: number): THREE.LineSegments {
+    const direction = end.clone().sub(start).setY(0).normalize();
+    const perpendicular = new THREE.Vector3(-direction.z, 0, direction.x).multiplyScalar(0.48);
+    const cap = new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints([end.clone().sub(perpendicular), end.clone().add(perpendicular)]),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 }),
+    );
+    cap.renderOrder = 4;
+    return cap;
   }
 
   private beginAnnotationMove(event: PointerEvent): void {
@@ -264,12 +280,23 @@ export class AnnotationTools {
   }
 
   private createCurvePoints(start: THREE.Vector3, end: THREE.Vector3): THREE.Vector3[] {
-    const midpoint = start.clone().lerp(end, 0.5);
     const direction = end.clone().sub(start);
-    const perpendicular = new THREE.Vector3(-direction.z, 0, direction.x).normalize();
-    midpoint.add(perpendicular.multiplyScalar(Math.min(1.1, direction.length() * 0.18)));
-    const curve = new THREE.QuadraticBezierCurve3(start, midpoint, end);
-    return curve.getPoints(20).map((point) => point.setY(ANNOTATION_Y));
+    const length = direction.length();
+    if (length < 0.001) return [start.clone().setY(ANNOTATION_Y), end.clone().setY(ANNOTATION_Y)];
+
+    const forward = direction.normalize();
+    const perpendicular = new THREE.Vector3(-forward.z, 0, forward.x);
+    const waveCount = Math.max(3, Math.round(length * 1.8));
+    const amplitude = Math.min(0.38, length * 0.08);
+    const points: THREE.Vector3[] = [];
+    for (let index = 0; index <= 32; index += 1) {
+      const progress = index / 32;
+      const point = start.clone().lerp(end, progress);
+      const envelope = Math.sin(Math.PI * progress);
+      point.addScaledVector(perpendicular, Math.sin(progress * waveCount * Math.PI * 2) * amplitude * envelope);
+      points.push(point.setY(ANNOTATION_Y));
+    }
+    return points;
   }
 
   private addArrow(end: THREE.Vector3, previous: THREE.Vector3, color: number): THREE.Mesh {
