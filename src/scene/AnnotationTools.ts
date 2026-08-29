@@ -46,6 +46,8 @@ export class AnnotationTools {
   private preview?: THREE.Line;
   private movingAnnotation?: THREE.Group;
   private moveOffset = new THREE.Vector3();
+  private moveStartPoint?: THREE.Vector3;
+  private moveWasDragged = false;
 
   constructor(root: HTMLElement, camera: THREE.Camera, domElement: HTMLCanvasElement, court: THREE.Mesh, controls: OrbitControls, players: PlayerTokens) {
     this.root = root;
@@ -180,30 +182,37 @@ export class AnnotationTools {
       }
       return;
     }
-    if (!this.drawing || !this.startPoint || !this.activeMode) return;
+    if (!this.drawing || !this.startPoint || !this.activeMode || this.activeMode === 'move') return;
+    const mode = this.activeMode;
     const point = this.getCourtPoint(event);
     if (!point) return;
     const endToken = this.getNearestToken(point);
     const endPoint = endToken?.mesh.position.clone().setY(ANNOTATION_Y) ?? point;
     this.removePreview();
-    this.preview = this.createLine(this.startPoint, endPoint, ANNOTATION_STYLES[this.activeMode], true);
+    this.preview = this.createLine([this.startPoint, endPoint], ANNOTATION_STYLES[mode], true);
     this.annotations.add(this.preview);
   };
 
   private readonly handlePointerUp = (event: PointerEvent): void => {
     if (this.movingAnnotation) {
+      const point = this.getCourtPoint(event);
+      if (!point) return;
+      if (this.moveStartPoint && point.distanceTo(this.moveStartPoint) > 0.08) this.moveWasDragged = true;
       if (this.domElement.hasPointerCapture(event.pointerId)) this.domElement.releasePointerCapture(event.pointerId);
+      if (!this.moveWasDragged) this.addAnglePoint(this.movingAnnotation, point);
       this.movingAnnotation = undefined;
+      this.moveStartPoint = undefined;
       this.controls.enabled = true;
       return;
     }
-    if (!this.drawing || !this.startPoint || !this.activeMode) return;
+    if (!this.drawing || !this.startPoint || !this.activeMode || this.activeMode === 'move') return;
+    const mode = this.activeMode;
     const point = this.getCourtPoint(event);
     const endToken = point ? this.getNearestToken(point) : undefined;
     const endPoint = endToken?.mesh.position.clone().setY(ANNOTATION_Y) ?? point;
     this.removePreview();
     if (endPoint && this.startPoint.distanceTo(endPoint) > 0.25) {
-      this.annotations.add(this.createAnnotation(this.startPoint, endPoint, ANNOTATION_STYLES[this.activeMode], this.activeMode));
+      this.annotations.add(this.createAnnotation(this.startPoint, endPoint, ANNOTATION_STYLES[mode], mode));
     }
     if (this.domElement.hasPointerCapture(event.pointerId)) this.domElement.releasePointerCapture(event.pointerId);
     this.drawing = false;
@@ -216,12 +225,13 @@ export class AnnotationTools {
     if (!this.preview) return;
     this.annotations.remove(this.preview);
     this.preview.geometry.dispose();
-    this.preview.material.dispose();
+    if (Array.isArray(this.preview.material)) this.preview.material.forEach((material) => material.dispose());
+    else this.preview.material.dispose();
     this.preview = undefined;
   }
 
-  private createLine(start: THREE.Vector3, end: THREE.Vector3, style: AnnotationStyle, isPreview: boolean): THREE.Line {
-    const points = style.curved ? this.createCurvePoints(start, end) : [start, end];
+  private createLine(endpoints: THREE.Vector3[], style: AnnotationStyle, isPreview: boolean): THREE.Line {
+    const points = style.curved ? this.createPathPoints(endpoints) : endpoints;
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     const material = style.dashed
       ? new THREE.LineDashedMaterial({ color: style.color, dashSize: 0.28, gapSize: 0.16, transparent: true, opacity: isPreview ? 0.55 : 0.95 })
@@ -235,7 +245,9 @@ export class AnnotationTools {
   private createAnnotation(start: THREE.Vector3, end: THREE.Vector3, style: AnnotationStyle, mode: AnnotationMode): THREE.Group {
     const group = new THREE.Group();
     group.userData.annotationMode = mode;
-    const line = this.createLine(start, end, style, false);
+    const points = [start.clone(), end.clone()];
+    group.userData.points = points;
+    const line = this.createLine(points, style, false);
     line.userData.annotationGroup = group;
     group.add(line);
     if (mode === 'screen') {
@@ -244,8 +256,8 @@ export class AnnotationTools {
       group.add(cap);
     }
     if (style.arrow) {
-      const points = style.curved ? this.createCurvePoints(start, end) : [start, end];
-      const arrow = this.addArrow(end, points[points.length - 2], style.color);
+      const pathPoints = style.curved ? this.createPathPoints(points) : points;
+      const arrow = this.addArrow(end, pathPoints[pathPoints.length - 2], style.color);
       arrow.userData.annotationGroup = group;
       group.add(arrow);
     }
@@ -273,10 +285,57 @@ export class AnnotationTools {
     if (!annotation) return;
     this.movingAnnotation = annotation;
     this.moveOffset.copy(annotation.position).sub(point);
+    this.moveStartPoint = point.clone();
+    this.moveWasDragged = false;
     this.controls.enabled = false;
     this.domElement.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopImmediatePropagation();
+  }
+
+  private addAnglePoint(annotation: THREE.Group, point: THREE.Vector3): void {
+    const points = annotation.userData.points as THREE.Vector3[] | undefined;
+    const mode = annotation.userData.annotationMode as AnnotationMode | undefined;
+    if (!points || !mode) return;
+    if (points.length === 2) points.splice(1, 0, point.clone());
+    else points[1] = point.clone();
+    this.rebuildAnnotation(annotation, mode, points);
+  }
+
+  private rebuildAnnotation(annotation: THREE.Group, mode: AnnotationMode, points: THREE.Vector3[]): void {
+    const style = ANNOTATION_STYLES[mode];
+    const oldChildren = [...annotation.children];
+    for (const child of oldChildren) {
+      annotation.remove(child);
+      if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+        child.geometry.dispose();
+        if (Array.isArray(child.material)) child.material.forEach((material) => material.dispose());
+        else child.material.dispose();
+      }
+    }
+    const line = this.createLine(points, style, false);
+    line.userData.annotationGroup = annotation;
+    annotation.add(line);
+    const pathPoints = style.curved ? this.createPathPoints(points) : points;
+    if (mode === 'screen') {
+      const cap = this.createScreenCap(points[0], points[points.length - 1], style.color);
+      cap.userData.annotationGroup = annotation;
+      annotation.add(cap);
+    }
+    if (style.arrow) {
+      const arrow = this.addArrow(points[points.length - 1], pathPoints[pathPoints.length - 2], style.color);
+      arrow.userData.annotationGroup = annotation;
+      annotation.add(arrow);
+    }
+  }
+
+  private createPathPoints(endpoints: THREE.Vector3[]): THREE.Vector3[] {
+    const path: THREE.Vector3[] = [];
+    for (let index = 0; index < endpoints.length - 1; index += 1) {
+      const segment = this.createCurvePoints(endpoints[index], endpoints[index + 1]);
+      path.push(...(index === 0 ? segment : segment.slice(1)));
+    }
+    return path;
   }
 
   private createCurvePoints(start: THREE.Vector3, end: THREE.Vector3): THREE.Vector3[] {
