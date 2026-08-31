@@ -48,6 +48,7 @@ export class PlayerTokens {
   private readonly tokenGroup = new THREE.Group();
   private draggedToken?: TokenRecord;
   private isDragging = false;
+  private ballOwnerId: string | null = 'home-4';
 
   constructor(root: HTMLElement, camera: THREE.Camera, domElement: HTMLCanvasElement, court: THREE.Mesh, controls: OrbitControls) {
     this.root = root;
@@ -70,6 +71,40 @@ export class PlayerTokens {
 
   public get records(): TokenRecord[] {
     return [...this.tokens.values()];
+  }
+
+  public getBallOwnerId(): string | null {
+    return this.ballOwnerId;
+  }
+
+  public setBallOwner(playerId: string | null): void {
+    this.ballOwnerId = playerId;
+  }
+
+  public syncBallToOwner(ball: THREE.Mesh, height = 0.22): void {
+    const ownerId = this.ballOwnerId;
+    if (!ownerId) return;
+    const record = this.tokens.get(ownerId);
+    if (!record) return;
+    const offsetX = record.mesh.position.x >= 0 ? 0.72 : -0.72;
+    const offsetZ = record.mesh.position.z >= 0 ? 0.42 : -0.42;
+    ball.position.set(record.mesh.position.x + offsetX, height, record.mesh.position.z + offsetZ);
+  }
+
+  public applyInterpolatedPositions(from: { players: PlayerState[] }, to: { players: PlayerState[] }, alpha: number): void {
+    const fromPlayers = new Map(from.players.map((player) => [player.id, player]));
+    for (const player of to.players) {
+      const record = this.tokens.get(player.id);
+      const start = fromPlayers.get(player.id);
+      if (!record || !start) continue;
+      record.mesh.position.lerpVectors(
+        new THREE.Vector3(start.position.x, TOKEN_Y, start.position.z),
+        new THREE.Vector3(player.position.x, TOKEN_Y, player.position.z),
+        THREE.MathUtils.clamp(alpha, 0, 1),
+      );
+      record.player.position.x = record.mesh.position.x;
+      record.player.position.z = record.mesh.position.z;
+    }
   }
 
   public addPlayer(player: PlayerState): void {
@@ -216,6 +251,7 @@ export class PlayerTokens {
 
     this.draggedToken = this.tokens.get(hit.userData.playerId as string);
     if (!this.draggedToken) return;
+    this.setBallOwner(this.draggedToken.player.id);
     const courtHit = this.raycaster.intersectObject(this.court)[0];
     if (courtHit) this.dragOffset.copy(this.draggedToken.mesh.position).sub(courtHit.point);
     this.isDragging = true;

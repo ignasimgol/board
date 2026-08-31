@@ -16,5 +16,7 @@ export interface PlayerState {
 
 export interface Keyframe {
   timestamp: number;
+  action?: string;
+  commentary?: string;
   players: PlayerState[];
 }

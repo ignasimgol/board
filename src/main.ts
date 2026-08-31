@@ -29,7 +29,7 @@ const enterScene = (): void => {
   introScreen?.classList.add('is-dismissed');
   hud?.classList.add('is-hidden');
   app?.classList.remove('intro-active');
-  menu?.classList.remove('is-hidden');
+  menu?.classList.add('is-hidden');
   menuOpen?.classList.remove('is-intro-hidden');
   basketballScene.setIntroParallaxEnabled(false);
 };

@@ -20,9 +20,9 @@ export class Menu {
 		this.root = root;
 		this.players = players;
 		this.panel = document.createElement('aside');
-		this.panel.className = 'player-menu is-hidden';
+		this.panel.className = 'player-menu is-hidden is-minimized';
 		this.panel.innerHTML = `
-			<div class="player-menu__header"><div><p class="menu-kicker">ROSTER / 10</p><h2>PLAYERS</h2></div></div>
+			<div class="player-menu__header"><div><p class="menu-kicker">ROSTER / 10</p><h2>PLAYERS</h2></div><button class="panel-minimize" type="button" aria-label="Minimizar roster">−</button></div>
 			<form class="player-form">
 				<input name="name" placeholder="Nombre" required maxlength="14" />
 				<input name="number" type="number" min="0" max="99" placeholder="#" required />
@@ -47,6 +47,14 @@ export class Menu {
 		root.appendChild(menuControls);
 		this.list = this.panel.querySelector('.player-list') as HTMLDivElement;
 		this.form = this.panel.querySelector('form') as HTMLFormElement;
+		const minimizeButton = this.panel.querySelector<HTMLButtonElement>('.panel-minimize')!;
+		minimizeButton.textContent = '+';
+		minimizeButton.setAttribute('aria-label', 'Restaurar roster');
+		minimizeButton.addEventListener('click', () => {
+			const minimized = this.panel.classList.toggle('is-minimized');
+			minimizeButton.textContent = minimized ? '+' : '−';
+			minimizeButton.setAttribute('aria-label', minimized ? 'Restaurar roster' : 'Minimizar roster');
+		});
 		this.panel.querySelector('[data-cancel]')!.addEventListener('click', () => this.resetForm());
 		this.form.addEventListener('submit', this.handleSubmit);
 		this.render();
