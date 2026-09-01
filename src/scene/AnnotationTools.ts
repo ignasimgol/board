@@ -35,6 +35,10 @@ const ARROW_WIDTH = 0.62;
 const DASH_SIZE = 0.34;
 const GAP_SIZE = 0.22;
 const SHOT_TIP_RADIUS = 0.16;
+const SCREEN_CAP_LENGTH = 0.96;
+const SHOT_RELEASE_HEIGHT = 2.0;
+const SHOT_RIM_HEIGHT = 3.05;
+const SHOT_ARC_FACTOR = 0.24;
 
 export class AnnotationTools {
   private readonly camera: THREE.Camera;
@@ -268,9 +272,15 @@ export class AnnotationTools {
     }
   }
 
-  private createLineGroup(endpoints: THREE.Vector3[], style: AnnotationStyle, isPreview: boolean, trimEnd = 0): THREE.Group {
+  private createLineGroup(
+    endpoints: THREE.Vector3[],
+    style: AnnotationStyle,
+    isPreview: boolean,
+    trimEnd = 0,
+    pathOverride?: THREE.Vector3[],
+  ): THREE.Group {
     const group = new THREE.Group();
-    const points = style.curved ? this.createPathPoints(endpoints) : endpoints;
+    const points = pathOverride ?? (style.curved ? this.createPathPoints(endpoints) : endpoints);
 
     const thickness = isPreview ? LINE_THICKNESS * 0.84 : LINE_THICKNESS;
     const solidTube = this.createTubeLine(points, style.color, isPreview ? 0.92 : 1, thickness, trimEnd, style.dashed);
@@ -312,8 +322,6 @@ export class AnnotationTools {
       leftPoint.z += normal.z * halfWidth;
       rightPoint.x -= normal.x * halfWidth;
       rightPoint.z -= normal.z * halfWidth;
-      leftPoint.y = ANNOTATION_Y;
-      rightPoint.y = ANNOTATION_Y;
 
       const vertexCount = positions.length / 3;
       positions.push(leftPoint.x, leftPoint.y, leftPoint.z);
@@ -390,8 +398,18 @@ export class AnnotationTools {
     group.userData.points = endpoints.map((p) => p.clone());
     group.userData.isPreview = isPreview;
 
-    const trimEnd = style.arrow ? ARROW_LENGTH : (mode === 'shot' ? SHOT_TIP_RADIUS : 0);
-    const lineGroup = this.createLineGroup(endpoints, style, isPreview, trimEnd);
+    const shotPath = mode === 'shot'
+      ? this.createShotParabolicPoints(endpoints[0], endpoints[endpoints.length - 1])
+      : undefined;
+
+    const trimEnd = style.arrow
+      ? ARROW_LENGTH
+      : mode === 'shot'
+        ? SHOT_TIP_RADIUS
+        : mode === 'screen'
+          ? LINE_THICKNESS * 0.5
+          : 0;
+    const lineGroup = this.createLineGroup(endpoints, style, isPreview, trimEnd, shotPath);
     lineGroup.children.forEach((child) => {
       (child as THREE.Object3D & { userData: { annotationGroup?: THREE.Group } }).userData.annotationGroup = group;
     });
@@ -407,8 +425,8 @@ export class AnnotationTools {
       const arrow = this.addArrow(pathPoints[pathPoints.length - 1], pathPoints[pathPoints.length - 2], style.color, isPreview);
       arrow.userData.annotationGroup = group;
       group.add(arrow);
-    } else if (mode === 'shot') {
-      const tipCircle = this.createShotTipCircle(endpoints[endpoints.length - 1], style.color, isPreview);
+    } else if (mode === 'shot' && shotPath) {
+      const tipCircle = this.createShotTipCircle(shotPath[shotPath.length - 1], style.color, isPreview);
       tipCircle.userData.annotationGroup = group;
       group.add(tipCircle);
     }
@@ -421,15 +439,53 @@ export class AnnotationTools {
     return group;
   }
 
-  private createScreenCap(start: THREE.Vector3, end: THREE.Vector3, color: number): THREE.LineSegments {
+  private createScreenCap(start: THREE.Vector3, end: THREE.Vector3, color: number): THREE.Mesh {
     const direction = end.clone().sub(start).setY(0).normalize();
-    const perpendicular = new THREE.Vector3(-direction.z, 0, direction.x).multiplyScalar(0.48);
-    const cap = new THREE.LineSegments(
-      new THREE.BufferGeometry().setFromPoints([end.clone().sub(perpendicular), end.clone().add(perpendicular)]),
-      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.98, linewidth: 1 }),
-    );
-    cap.renderOrder = 4;
-    return cap;
+    const up = new THREE.Vector3(0, 1, 0);
+    const perpendicular = new THREE.Vector3().crossVectors(up, direction).normalize();
+    const halfLength = SCREEN_CAP_LENGTH * 0.5;
+    const halfThick = LINE_THICKNESS * 0.5;
+
+    const capL_back = new THREE.Vector3()
+      .copy(end)
+      .addScaledVector(perpendicular, halfLength)
+      .addScaledVector(direction, -halfThick);
+    const capR_back = new THREE.Vector3()
+      .copy(end)
+      .addScaledVector(perpendicular, -halfLength)
+      .addScaledVector(direction, -halfThick);
+    const capL_front = new THREE.Vector3()
+      .copy(end)
+      .addScaledVector(perpendicular, halfLength)
+      .addScaledVector(direction, halfThick);
+    const capR_front = new THREE.Vector3()
+      .copy(end)
+      .addScaledVector(perpendicular, -halfLength)
+      .addScaledVector(direction, halfThick);
+
+    for (const p of [capL_back, capR_back, capL_front, capR_front]) p.y = ANNOTATION_Y;
+
+    const positions = new Float32Array([
+      capL_back.x, capL_back.y, capL_back.z,
+      capR_back.x, capR_back.y, capR_back.z,
+      capL_front.x, capL_front.y, capL_front.z,
+      capR_front.x, capR_front.y, capR_front.z,
+    ]);
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setIndex([0, 1, 2, 1, 3, 2]);
+    geometry.computeVertexNormals();
+
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 4;
+    return mesh;
   }
 
   private addArrow(end: THREE.Vector3, previous: THREE.Vector3, color: number, isPreview: boolean): THREE.Group {
@@ -489,8 +545,7 @@ export class AnnotationTools {
       side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.copy(end);
-    mesh.position.y = ANNOTATION_Y;
+    mesh.position.set(end.x, end.y, end.z);
     mesh.renderOrder = 4;
     group.add(mesh);
     return group;
@@ -630,8 +685,18 @@ export class AnnotationTools {
       this.disposeObjectTree(child);
     }
 
-    const trimEnd = style.arrow ? ARROW_LENGTH : 0;
-    const lineGroup = this.createLineGroup(points, style, false, trimEnd);
+    const shotPath = mode === 'shot'
+      ? this.createShotParabolicPoints(points[0], points[points.length - 1])
+      : undefined;
+
+    const trimEnd = style.arrow
+      ? ARROW_LENGTH
+      : mode === 'shot'
+        ? SHOT_TIP_RADIUS
+        : mode === 'screen'
+          ? LINE_THICKNESS * 0.5
+          : 0;
+    const lineGroup = this.createLineGroup(points, style, false, trimEnd, shotPath);
     lineGroup.children.forEach((child) => {
       (child as THREE.Object3D & { userData: { annotationGroup?: THREE.Group } }).userData.annotationGroup = annotation;
     });
@@ -647,6 +712,10 @@ export class AnnotationTools {
       const arrow = this.addArrow(points[points.length - 1], pathPoints[pathPoints.length - 2], style.color, false);
       arrow.userData.annotationGroup = annotation;
       annotation.add(arrow);
+    } else if (mode === 'shot' && shotPath) {
+      const tipCircle = this.createShotTipCircle(shotPath[shotPath.length - 1], style.color, false);
+      tipCircle.userData.annotationGroup = annotation;
+      annotation.add(tipCircle);
     }
   }
 
@@ -794,6 +863,22 @@ export class AnnotationTools {
       const envelope = Math.sin(Math.PI * progress);
       point.addScaledVector(perpendicular, Math.sin(progress * waveCount * Math.PI * 2) * amplitude * envelope);
       points.push(point.setY(ANNOTATION_Y));
+    }
+    return points;
+  }
+
+  private createShotParabolicPoints(start: THREE.Vector3, end: THREE.Vector3): THREE.Vector3[] {
+    const distance = new THREE.Vector3(end.x - start.x, 0, end.z - start.z).length();
+    const segments = Math.max(22, Math.round(distance * 3));
+    const points: THREE.Vector3[] = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const x = start.x + (end.x - start.x) * t;
+      const z = start.z + (end.z - start.z) * t;
+      const linearY = SHOT_RELEASE_HEIGHT + (SHOT_RIM_HEIGHT - SHOT_RELEASE_HEIGHT) * t;
+      const arcLift = SHOT_ARC_FACTOR * distance * 4 * t * (1 - t);
+      const y = linearY + arcLift;
+      points.push(new THREE.Vector3(x, y, z));
     }
     return points;
   }
