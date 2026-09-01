@@ -223,7 +223,7 @@ export class PlayerTokens {
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
-    if (this.domElement.classList.contains('is-annotating')) return;
+    if (this.domElement.classList.contains('is-dragging')) return;
     this.setPointer(event);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const intersections = this.raycaster.intersectObjects([...this.tokens.values()].map((record) => record.mesh));

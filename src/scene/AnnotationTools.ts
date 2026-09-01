@@ -46,6 +46,7 @@ export class AnnotationTools {
   private readonly court: THREE.Mesh;
   private readonly controls: OrbitControls;
   private readonly players: PlayerTokens;
+  private readonly ball?: THREE.Mesh;
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly annotations = new THREE.Group();
@@ -62,12 +63,13 @@ export class AnnotationTools {
   private moveWasDragged = false;
   private selectedAnnotation?: THREE.Group;
 
-  constructor(root: HTMLElement, camera: THREE.Camera, domElement: HTMLCanvasElement, court: THREE.Mesh, controls: OrbitControls, players: PlayerTokens) {
+  constructor(root: HTMLElement, camera: THREE.Camera, domElement: HTMLCanvasElement, court: THREE.Mesh, controls: OrbitControls, players: PlayerTokens, ball?: THREE.Mesh) {
     this.camera = camera;
     this.domElement = domElement;
     this.court = court;
     this.controls = controls;
     this.players = players;
+    this.ball = ball;
     this.annotations.name = 'tactical-annotations';
     this.toolbar = this.createToolbar();
     root.appendChild(this.toolbar);
@@ -83,6 +85,7 @@ export class AnnotationTools {
     this.domElement.removeEventListener('pointermove', this.handlePointerMove);
     this.domElement.removeEventListener('pointerup', this.handlePointerUp);
     this.domElement.removeEventListener('pointercancel', this.handlePointerUp);
+    window.removeEventListener('keydown', this.handleKeydown);
     this.toolbar.remove();
     this.annotations.traverse((object) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.LineSegments) {
@@ -153,6 +156,7 @@ export class AnnotationTools {
     this.domElement.addEventListener('pointermove', this.handlePointerMove);
     this.domElement.addEventListener('pointerup', this.handlePointerUp);
     this.domElement.addEventListener('pointercancel', this.handlePointerUp);
+    window.addEventListener('keydown', this.handleKeydown);
   }
 
   private setPointer(event: PointerEvent): void {
@@ -181,8 +185,16 @@ export class AnnotationTools {
     return nearest;
   }
 
+  private hitsBall(event: PointerEvent): boolean {
+    if (!this.ball) return false;
+    this.setPointer(event);
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    return Boolean(this.raycaster.intersectObject(this.ball, false)[0]);
+  }
+
   private readonly handlePointerDown = (event: PointerEvent): void => {
     if (!this.activeMode) return;
+    if (this.hitsBall(event)) return;
     if (this.activeMode === 'move') {
       this.beginAnnotationMove(event);
       return;
@@ -251,6 +263,23 @@ export class AnnotationTools {
     this.startToken = undefined;
     this.controls.enabled = true;
   };
+
+  private readonly handleKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+    const target = event.target as HTMLElement | null;
+    if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT') return;
+    if (!this.selectedAnnotation) return;
+    event.preventDefault();
+    this.deleteSelected();
+  };
+
+  private deleteSelected(): void {
+    const annotation = this.selectedAnnotation;
+    if (!annotation) return;
+    this.clearSelection();
+    this.annotations.remove(annotation);
+    this.disposeObjectTree(annotation);
+  }
 
   private removePreview(): void {
     if (!this.preview) return;

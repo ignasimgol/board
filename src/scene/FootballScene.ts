@@ -9,6 +9,7 @@ const COURT_WIDTH = 28;
 const COURT_DEPTH = 15;
 const FIELD_Y = 0;
 const LINE_Y = 0.035;
+const COURT_LINE_WIDTH = 0.07;
 
 export class BasketballScene {
   private readonly root: HTMLElement;
@@ -69,7 +70,7 @@ export class BasketballScene {
     this.ball = this.createBall();
     this.scene.add(this.ball);
     this.menu = new Menu(root, this.playerTokens);
-    this.annotations = new AnnotationTools(root, this.camera, this.renderer.domElement, this.court, this.controls, this.playerTokens);
+    this.annotations = new AnnotationTools(root, this.camera, this.renderer.domElement, this.court, this.controls, this.playerTokens, this.ball);
     this.scene.add(this.annotations.object);
     this.addStands();
     this.addPerimeter();
@@ -144,8 +145,7 @@ export class BasketballScene {
   }
 
   private readonly handleBallPointerDown = (event: PointerEvent): void => {
-    if (this.renderer.domElement.classList.contains('is-annotating')) return;
-    if (this.renderer.domElement.classList.contains('is-moving')) return;
+    if (this.renderer.domElement.classList.contains('is-dragging')) return;
     this.setCourtPointer(event);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hit = this.raycaster.intersectObject(this.ball, false)[0];
@@ -257,7 +257,6 @@ export class BasketballScene {
     this.court = field;
 
     const markings = new THREE.Group();
-    const lineMaterial = new THREE.LineBasicMaterial({ color: '#e6f0d8', transparent: true, opacity: 0.92, linewidth: 2.5 });
     const addRectangle = (width: number, depth: number, x: number, z: number): void => {
       const points = [
         new THREE.Vector3(x - width / 2, LINE_Y, z - depth / 2),
@@ -265,62 +264,157 @@ export class BasketballScene {
         new THREE.Vector3(x + width / 2, LINE_Y, z + depth / 2),
         new THREE.Vector3(x - width / 2, LINE_Y, z + depth / 2),
       ];
-      markings.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points), lineMaterial));
+      markings.add(this.createThickPolyline(points, true, COURT_LINE_WIDTH));
     };
 
     addRectangle(COURT_WIDTH - 0.12, COURT_DEPTH - 0.12, 0, 0);
-    const halfway = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, LINE_Y, -COURT_DEPTH / 2),
-        new THREE.Vector3(0, LINE_Y, COURT_DEPTH / 2),
-      ]),
-      lineMaterial,
-    );
-    markings.add(halfway);
-    markings.add(new THREE.LineLoop(this.circleGeometry(1.8, 0, 0), lineMaterial));
+    markings.add(this.createThickPolyline([
+      new THREE.Vector3(0, LINE_Y, -COURT_DEPTH / 2),
+      new THREE.Vector3(0, LINE_Y, COURT_DEPTH / 2),
+    ], false, COURT_LINE_WIDTH));
+    markings.add(this.createThickCircle(1.8, 0, 0, COURT_LINE_WIDTH));
 
     for (const end of [-1, 1]) {
       const x = end * (COURT_WIDTH / 2 - 5.8 / 2);
       addRectangle(5.8, 4.9, x, 0);
-      markings.add(new THREE.LineLoop(this.circleGeometry(1.8, end * (COURT_WIDTH / 2 - 5.8), 0), lineMaterial));
-      markings.add(new THREE.Line(this.arcGeometry(6.75, end), lineMaterial));
-        markings.add(new THREE.LineSegments(
-        new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(end * (COURT_WIDTH / 2 - 1.25), LINE_Y, -6.6),
-          new THREE.Vector3(end * (COURT_WIDTH / 2), LINE_Y, -6.6),
-          new THREE.Vector3(end * (COURT_WIDTH / 2 - 1.25), LINE_Y, 6.6),
-          new THREE.Vector3(end * (COURT_WIDTH / 2), LINE_Y, 6.6),
-        ]),
-        lineMaterial,
-      ));
+      markings.add(this.createThickCircle(1.8, end * (COURT_WIDTH / 2 - 5.8), 0, COURT_LINE_WIDTH));
+
+      const centerX = end * (COURT_WIDTH / 2 - 1.25);
+      const cornerZ = 6.6;
+      const r3pt = 6.75;
+      const arcAngle = Math.asin(Math.min(1, cornerZ / r3pt));
+      const start = end === 1 ? Math.PI - arcAngle : arcAngle;
+      const sweep = end === 1 ? 2 * arcAngle : -2 * arcAngle;
+      markings.add(this.createThickArc(r3pt, centerX, 0, start, sweep, COURT_LINE_WIDTH));
+
+      const joinOffsetX = r3pt * Math.cos(arcAngle);
+      const joinX = centerX - end * joinOffsetX;
+      const sidelineX = end * (COURT_WIDTH / 2);
+      markings.add(this.createThickPolyline([
+        new THREE.Vector3(sidelineX, LINE_Y, -cornerZ),
+        new THREE.Vector3(joinX, LINE_Y, -cornerZ),
+      ], false, COURT_LINE_WIDTH));
+      markings.add(this.createThickPolyline([
+        new THREE.Vector3(sidelineX, LINE_Y, cornerZ),
+        new THREE.Vector3(joinX, LINE_Y, cornerZ),
+      ], false, COURT_LINE_WIDTH));
       this.addBasket(end);
     }
 
     markings.traverse((object) => {
-      object.renderOrder = 1;
-      object.frustumCulled = false;
+      if (object instanceof THREE.Mesh) {
+        object.renderOrder = Math.max(object.renderOrder, 2);
+        object.frustumCulled = false;
+      }
     });
     this.scene.add(markings);
   }
 
-  private circleGeometry(radius: number, x: number, z: number): THREE.BufferGeometry {
-    const points: THREE.Vector3[] = [];
-    for (let index = 0; index <= 48; index += 1) {
-      const angle = (index / 48) * Math.PI * 2;
-      points.push(new THREE.Vector3(x + Math.cos(angle) * radius, LINE_Y, z + Math.sin(angle) * radius));
+  private createThickPolyline(points: THREE.Vector3[], closed: boolean, thickness: number, color = '#e6f0d8'): THREE.Mesh {
+    const half = thickness * 0.5;
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const up = new THREE.Vector3(0, 1, 0);
+    const tangent = new THREE.Vector3();
+    const normal = new THREE.Vector3();
+    const workPrev = new THREE.Vector3();
+    const workNext = new THREE.Vector3();
+    const input = points.slice();
+    if (closed) input.push(points[0]);
+    for (let i = 0; i < input.length; i += 1) {
+      if (i === 0) {
+        tangent.copy(input[i + 1]).sub(input[i]).setY(0).normalize();
+      } else if (i === input.length - 1) {
+        tangent.copy(input[i]).sub(input[i - 1]).setY(0).normalize();
+      } else {
+        workPrev.copy(input[i]).sub(input[i - 1]).setY(0).normalize();
+        workNext.copy(input[i + 1]).sub(input[i]).setY(0).normalize();
+        tangent.copy(workPrev).add(workNext).normalize();
+      }
+      normal.crossVectors(up, tangent).normalize();
+      const base = i * 2;
+      positions.push(
+        input[i].x + normal.x * half, LINE_Y, input[i].z + normal.z * half,
+        input[i].x - normal.x * half, LINE_Y, input[i].z - normal.z * half,
+      );
+      if (i > 0) {
+        const prev = (i - 1) * 2;
+        indices.push(prev, base, prev + 1, prev + 1, base, base + 1);
+      }
     }
-    return new THREE.BufferGeometry().setFromPoints(points);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshBasicMaterial({
+      color, side: THREE.DoubleSide, depthTest: true, depthWrite: false, transparent: true, opacity: 0.98,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 2;
+    mesh.frustumCulled = false;
+    return mesh;
   }
 
-  private arcGeometry(radius: number, end: number): THREE.BufferGeometry {
-    const points: THREE.Vector3[] = [];
-    const centerX = end * (COURT_WIDTH / 2 - 1.25);
-    const start = end === 1 ? Math.PI / 2 : -Math.PI / 2;
-    for (let index = 0; index <= 32; index += 1) {
-      const angle = start + (index / 32) * Math.PI;
-      points.push(new THREE.Vector3(centerX + Math.cos(angle) * radius, LINE_Y, Math.sin(angle) * radius));
+  private createThickCircle(radius: number, cx: number, cz: number, thickness: number, color = '#e6f0d8'): THREE.Mesh {
+    const segments = 64;
+    const outer = radius + thickness * 0.5;
+    const inner = radius - thickness * 0.5;
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (let i = 0; i <= segments; i += 1) {
+      const a = (i / segments) * Math.PI * 2;
+      const cosA = Math.cos(a);
+      const sinA = Math.sin(a);
+      positions.push(cx + cosA * outer, LINE_Y, cz + sinA * outer);
+      positions.push(cx + cosA * inner, LINE_Y, cz + sinA * inner);
+      if (i > 0) {
+        const base = i * 2;
+        const prev = (i - 1) * 2;
+        indices.push(prev, base, prev + 1, prev + 1, base, base + 1);
+      }
     }
-    return new THREE.BufferGeometry().setFromPoints(points);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshBasicMaterial({
+      color, side: THREE.DoubleSide, depthTest: true, depthWrite: false, transparent: true, opacity: 0.98,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 2;
+    mesh.frustumCulled = false;
+    return mesh;
+  }
+
+  private createThickArc(radius: number, cx: number, cz: number, startAngle: number, sweepAngle: number, thickness: number, color = '#e6f0d8'): THREE.Mesh {
+    const segments = 56;
+    const outer = radius + thickness * 0.5;
+    const inner = radius - thickness * 0.5;
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (let i = 0; i <= segments; i += 1) {
+      const a = startAngle + (i / segments) * sweepAngle;
+      const cosA = Math.cos(a);
+      const sinA = Math.sin(a);
+      positions.push(cx + cosA * outer, LINE_Y, cz + sinA * outer);
+      positions.push(cx + cosA * inner, LINE_Y, cz + sinA * inner);
+      if (i > 0) {
+        const base = i * 2;
+        const prev = (i - 1) * 2;
+        indices.push(prev, base, prev + 1, prev + 1, base, base + 1);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshBasicMaterial({
+      color, side: THREE.DoubleSide, depthTest: true, depthWrite: false, transparent: true, opacity: 0.98,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 2;
+    mesh.frustumCulled = false;
+    return mesh;
   }
 
   private addBasket(end: number): void {
