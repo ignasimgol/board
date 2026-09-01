@@ -20,7 +20,7 @@ const ANNOTATION_STYLES: Record<AnnotationMode, AnnotationStyle> = {
   dribble: { label: 'DRIBBLE', color: 0xd7f34a, dashed: false, curved: true, arrow: true },
   pass: { label: 'PASS', color: 0xffffff, dashed: true, curved: false, arrow: true },
   screen: { label: 'SCREEN', color: 0xff765b, dashed: false, curved: false, arrow: false },
-  shot: { label: 'SHOT', color: 0xff765b, dashed: true, curved: true, arrow: true },
+  shot: { label: 'SHOT', color: 0xff765b, dashed: true, curved: false, arrow: false },
   handoff: { label: 'HANDOFF', color: 0x54c7d9, dashed: false, curved: true, arrow: true },
 };
 
@@ -29,6 +29,12 @@ const ANNOTATION_Y = 0.08;
 const COURT_WIDTH = 28;
 const COURT_DEPTH = 15;
 const HANDLE_RADIUS = 0.28;
+const LINE_THICKNESS = 0.18;
+const ARROW_LENGTH = 0.78;
+const ARROW_WIDTH = 0.62;
+const DASH_SIZE = 0.34;
+const GAP_SIZE = 0.22;
+const SHOT_TIP_RADIUS = 0.16;
 
 export class AnnotationTools {
   private readonly camera: THREE.Camera;
@@ -262,53 +268,119 @@ export class AnnotationTools {
     }
   }
 
-  private createLineGroup(endpoints: THREE.Vector3[], style: AnnotationStyle, isPreview: boolean): THREE.Group {
+  private createLineGroup(endpoints: THREE.Vector3[], style: AnnotationStyle, isPreview: boolean, trimEnd = 0): THREE.Group {
     const group = new THREE.Group();
     const points = style.curved ? this.createPathPoints(endpoints) : endpoints;
 
-    const tubeBand = this.createTubeLine(points, style.color, isPreview ? 0.22 : 0.30, 0.22, isPreview);
-    tubeBand.userData = { isBand: true };
-    group.add(tubeBand);
-
-    const coreGeometry = new THREE.BufferGeometry().setFromPoints(points);
-    const coreMaterial = style.dashed
-      ? new THREE.LineDashedMaterial({
-          color: style.color,
-          dashSize: 0.28,
-          gapSize: 0.16,
-          transparent: true,
-          opacity: isPreview ? 0.7 : 0.98,
-          linewidth: 1,
-        })
-      : new THREE.LineBasicMaterial({
-          color: style.color,
-          transparent: true,
-          opacity: isPreview ? 0.7 : 0.98,
-          linewidth: 1,
-        });
-    const core = new THREE.Line(coreGeometry, coreMaterial);
-    core.renderOrder = 3;
-    if (style.dashed) core.computeLineDistances();
-
-    group.add(core);
+    const thickness = isPreview ? LINE_THICKNESS * 0.84 : LINE_THICKNESS;
+    const solidTube = this.createTubeLine(points, style.color, isPreview ? 0.92 : 1, thickness, trimEnd, style.dashed);
+    solidTube.userData = { isBand: true };
+    group.add(solidTube);
 
     return group;
   }
 
-  private createTubeLine(pathPoints: THREE.Vector3[], color: number, opacity: number, thickness: number, isPreview: boolean): THREE.Mesh {
+  private createTubeLine(pathPoints: THREE.Vector3[], color: number, opacity: number, thickness: number, trimEnd = 0, dashed = false): THREE.Mesh {
     const curve = new THREE.CatmullRomCurve3(pathPoints);
     curve.curveType = 'catmullrom';
     curve.tension = pathPoints.length === 2 ? 0 : 0.5;
-    const geometry = new THREE.TubeGeometry(curve, Math.max(20, pathPoints.length * 6), thickness, 8, false);
+
+    const fullLength = curve.getLength();
+    const tEnd = fullLength > trimEnd ? 1 - trimEnd / fullLength : 0;
+    const trimmedLength = fullLength * Math.max(tEnd, 0);
+
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const halfWidth = thickness * 0.5;
+    const up = new THREE.Vector3(0, 1, 0);
+    const tangent = new THREE.Vector3();
+    const normal = new THREE.Vector3();
+    const leftPoint = new THREE.Vector3();
+    const rightPoint = new THREE.Vector3();
+
+    const addRow = (t: number): number => {
+      const clampedT = THREE.MathUtils.clamp(t, 0, 1);
+      curve.getTangentAt(clampedT, tangent);
+      tangent.y = 0;
+      if (tangent.lengthSq() < 1e-6) tangent.set(1, 0, 0);
+      tangent.normalize();
+      normal.crossVectors(up, tangent).normalize();
+
+      curve.getPointAt(clampedT, leftPoint);
+      rightPoint.copy(leftPoint);
+      leftPoint.x += normal.x * halfWidth;
+      leftPoint.z += normal.z * halfWidth;
+      rightPoint.x -= normal.x * halfWidth;
+      rightPoint.z -= normal.z * halfWidth;
+      leftPoint.y = ANNOTATION_Y;
+      rightPoint.y = ANNOTATION_Y;
+
+      const vertexCount = positions.length / 3;
+      positions.push(leftPoint.x, leftPoint.y, leftPoint.z);
+      positions.push(rightPoint.x, rightPoint.y, rightPoint.z);
+      return vertexCount;
+    };
+
+    if (!dashed) {
+      const tubularSegments = Math.max(36, pathPoints.length * 12);
+      const segments = Math.max(2, Math.round(tubularSegments * Math.max(tEnd, 0.01)));
+      for (let i = 0; i <= segments; i++) {
+        const t = segments === 0 ? 0 : (i / segments) * tEnd;
+        addRow(t);
+      }
+      for (let i = 0; i < segments; i++) {
+        const a = i * 2;
+        const b = a + 1;
+        const c = a + 2;
+        const d = a + 3;
+        indices.push(a, b, c);
+        indices.push(b, d, c);
+      }
+    } else {
+      const cycle = DASH_SIZE + GAP_SIZE;
+      const dashCycles = Math.max(1, Math.floor(trimmedLength / cycle));
+      const adjustedCycle = trimmedLength / dashCycles;
+      const dashFrac = DASH_SIZE / cycle;
+      const stepPerDash = Math.max(3, Math.round(8 * (DASH_SIZE / 0.5)));
+      let baseIndex = 0;
+
+      for (let n = 0; n < dashCycles; n++) {
+        const dashStartT = (n * adjustedCycle) / fullLength;
+        const dashEndT = (n * adjustedCycle + adjustedCycle * dashFrac) / fullLength;
+        for (let i = 0; i <= stepPerDash; i++) {
+          const localT = stepPerDash === 0 ? 0 : i / stepPerDash;
+          const t = dashStartT + (dashEndT - dashStartT) * localT;
+          if (t > tEnd) break;
+          addRow(t);
+        }
+        const dashSegs = (positions.length / 3 - baseIndex) / 2 - 1;
+        for (let i = 0; i < dashSegs; i++) {
+          const a = baseIndex + i * 2;
+          const b = a + 1;
+          const c = a + 2;
+          const d = a + 3;
+          indices.push(a, b, c);
+          indices.push(b, d, c);
+        }
+        baseIndex = positions.length / 3;
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    if (indices.length > 0) geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+
     const material = new THREE.MeshBasicMaterial({
       color,
-      transparent: true,
+      transparent: opacity < 1,
       opacity,
       depthTest: false,
       depthWrite: false,
+      side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.renderOrder = isPreview ? 2 : 2;
+    mesh.renderOrder = 2;
     return mesh;
   }
 
@@ -318,7 +390,8 @@ export class AnnotationTools {
     group.userData.points = endpoints.map((p) => p.clone());
     group.userData.isPreview = isPreview;
 
-    const lineGroup = this.createLineGroup(endpoints, style, isPreview);
+    const trimEnd = style.arrow ? ARROW_LENGTH : (mode === 'shot' ? SHOT_TIP_RADIUS : 0);
+    const lineGroup = this.createLineGroup(endpoints, style, isPreview, trimEnd);
     lineGroup.children.forEach((child) => {
       (child as THREE.Object3D & { userData: { annotationGroup?: THREE.Group } }).userData.annotationGroup = group;
     });
@@ -334,6 +407,10 @@ export class AnnotationTools {
       const arrow = this.addArrow(pathPoints[pathPoints.length - 1], pathPoints[pathPoints.length - 2], style.color, isPreview);
       arrow.userData.annotationGroup = group;
       group.add(arrow);
+    } else if (mode === 'shot') {
+      const tipCircle = this.createShotTipCircle(endpoints[endpoints.length - 1], style.color, isPreview);
+      tipCircle.userData.annotationGroup = group;
+      group.add(tipCircle);
     }
     return group;
   }
@@ -358,46 +435,65 @@ export class AnnotationTools {
   private addArrow(end: THREE.Vector3, previous: THREE.Vector3, color: number, isPreview: boolean): THREE.Group {
     const arrowGroup = new THREE.Group();
     const direction = end.clone().sub(previous).setY(0).normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    const perpendicular = new THREE.Vector3().crossVectors(up, direction).normalize();
 
-    const haloLength = 0.72;
-    const haloBase = 0.38;
-    const haloGeometry = new THREE.ConeGeometry(haloBase, haloLength, 14);
-    const haloMaterial = new THREE.MeshBasicMaterial({
+    const tip = new THREE.Vector3().copy(end);
+    const halfBase = ARROW_WIDTH * 0.5;
+    const baseL = new THREE.Vector3()
+      .copy(end)
+      .addScaledVector(direction, -ARROW_LENGTH)
+      .addScaledVector(perpendicular, halfBase);
+    const baseR = new THREE.Vector3()
+      .copy(end)
+      .addScaledVector(direction, -ARROW_LENGTH)
+      .addScaledVector(perpendicular, -halfBase);
+
+    for (const p of [tip, baseL, baseR]) p.y = ANNOTATION_Y;
+
+    const positions = new Float32Array([
+      tip.x, tip.y, tip.z,
+      baseL.x, baseL.y, baseL.z,
+      baseR.x, baseR.y, baseR.z,
+    ]);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setIndex([0, 1, 2]);
+    geometry.computeVertexNormals();
+
+    const material = new THREE.MeshBasicMaterial({
       color,
-      transparent: true,
-      opacity: isPreview ? 0.2 : 0.3,
+      transparent: isPreview,
+      opacity: isPreview ? 0.92 : 1,
       depthTest: false,
       depthWrite: false,
+      side: THREE.DoubleSide,
     });
-    const halo = new THREE.Mesh(haloGeometry, haloMaterial);
-    halo.position.copy(end);
-    halo.position.y = ANNOTATION_Y;
-    const backOffset = direction.clone().multiplyScalar(haloLength * 0.05);
-    halo.position.add(backOffset);
-    halo.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
-    halo.renderOrder = 3;
-    arrowGroup.add(halo);
-
-    const tipLength = 0.52;
-    const tipBase = 0.22;
-    const tipGeometry = new THREE.ConeGeometry(tipBase, tipLength, 16);
-    const tipMaterial = new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: isPreview ? 0.85 : 1,
-      depthTest: false,
-      depthWrite: false,
-    });
-    const tip = new THREE.Mesh(tipGeometry, tipMaterial);
-    tip.position.copy(end);
-    tip.position.y = ANNOTATION_Y;
-    const tipBackOffset = direction.clone().multiplyScalar(tipLength * 0.45);
-    tip.position.sub(tipBackOffset);
-    tip.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
-    tip.renderOrder = 4;
-    arrowGroup.add(tip);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 4;
+    arrowGroup.add(mesh);
 
     return arrowGroup;
+  }
+
+  private createShotTipCircle(end: THREE.Vector3, color: number, isPreview: boolean): THREE.Group {
+    const group = new THREE.Group();
+    const geometry = new THREE.CircleGeometry(SHOT_TIP_RADIUS, 28);
+    geometry.rotateX(-Math.PI / 2);
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      transparent: isPreview,
+      opacity: isPreview ? 0.92 : 1,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(end);
+    mesh.position.y = ANNOTATION_Y;
+    mesh.renderOrder = 4;
+    group.add(mesh);
+    return group;
   }
 
   private beginAnnotationMove(event: PointerEvent): void {
@@ -534,7 +630,8 @@ export class AnnotationTools {
       this.disposeObjectTree(child);
     }
 
-    const lineGroup = this.createLineGroup(points, style, false);
+    const trimEnd = style.arrow ? ARROW_LENGTH : 0;
+    const lineGroup = this.createLineGroup(points, style, false, trimEnd);
     lineGroup.children.forEach((child) => {
       (child as THREE.Object3D & { userData: { annotationGroup?: THREE.Group } }).userData.annotationGroup = annotation;
     });

@@ -42,6 +42,7 @@ export class Menu {
 		this.openButton.addEventListener('click', () => {
 			const isOpen = !this.panel.classList.contains('is-hidden');
 			this.panel.classList.toggle('is-hidden', isOpen);
+			if (!isOpen) this.render();
 		});
 		menuControls.append(this.openButton);
 		root.appendChild(menuControls);

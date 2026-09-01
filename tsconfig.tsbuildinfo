@@ -1,1 +1,1 @@
-{"root":["./src/assets.d.ts","./src/main.ts","./src/types.ts","./src/scene/annotationtools.ts","./src/scene/footballscene.ts","./src/scene/menu.ts","./src/scene/playertokens.ts","./src/scene/timelinecontroller.ts"],"version":"5.9.3"}
+{"root":["./src/assets.d.ts","./src/main.ts","./src/types.ts","./src/scene/annotationtools.ts","./src/scene/footballscene.ts","./src/scene/menu.ts","./src/scene/playertokens.ts"],"version":"5.9.3"}

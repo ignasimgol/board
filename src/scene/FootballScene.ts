@@ -3,7 +3,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PlayerTokens } from './PlayerTokens';
 import { Menu } from './Menu';
 import { AnnotationTools } from './AnnotationTools';
-import { TimelineController } from './TimelineController';
 import parquetTextureUrl from '../assets/parquet.jpg';
 
 const COURT_WIDTH = 28;
@@ -20,11 +19,13 @@ export class BasketballScene {
   private readonly playerTokens: PlayerTokens;
   private readonly menu: Menu;
   private readonly annotations: AnnotationTools;
-  private readonly timeline: TimelineController;
   private readonly ball: THREE.Mesh;
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly pointer = new THREE.Vector2();
+  private readonly ballDragOffset = new THREE.Vector3();
+  private isDraggingBall = false;
   private readonly cameraTarget = new THREE.Vector3(0, 0, 0);
   private followBall = false;
-  private readonly timelinePanel: HTMLDivElement;
   private court?: THREE.Mesh;
   private introParallaxEnabled = true;
   private readonly parallaxTarget = new THREE.Vector3();
@@ -66,22 +67,19 @@ export class BasketballScene {
     this.playerTokens = new PlayerTokens(root, this.camera, this.renderer.domElement, this.court, this.controls);
     this.scene.add(this.playerTokens.object);
     this.ball = this.createBall();
-    this.playerTokens.syncBallToOwner(this.ball);
     this.scene.add(this.ball);
-    this.timeline = new TimelineController(this.playerTokens, this.ball);
     this.menu = new Menu(root, this.playerTokens);
     this.annotations = new AnnotationTools(root, this.camera, this.renderer.domElement, this.court, this.controls, this.playerTokens);
     this.scene.add(this.annotations.object);
     this.addStands();
     this.addPerimeter();
     this.addAtmosphere();
-    this.timelinePanel = this.createTimelinePanel();
+    this.bindBallPointerEvents();
     window.addEventListener('resize', this.handleResize);
   }
 
   public start(): void {
-    this.renderer.setAnimationLoop((now) => {
-      this.timeline.update(now);
+    this.renderer.setAnimationLoop(() => {
       if (this.followBall) this.cameraTarget.lerp(this.ball.position, 0.12);
       else this.cameraTarget.lerp(this.controls.target, 0.12);
       this.controls.target.copy(this.cameraTarget);
@@ -111,15 +109,80 @@ export class BasketballScene {
   public dispose(): void {
     window.removeEventListener('resize', this.handleResize);
     this.renderer.setAnimationLoop(null);
+    this.renderer.domElement.removeEventListener('pointerdown', this.handleBallPointerDown);
+    this.renderer.domElement.removeEventListener('pointermove', this.handleBallPointerMove);
+    this.renderer.domElement.removeEventListener('pointerup', this.handleBallPointerUp);
+    this.renderer.domElement.removeEventListener('pointercancel', this.handleBallPointerUp);
     this.controls.dispose();
     this.playerTokens.dispose();
     this.menu.dispose();
     this.annotations.dispose();
-    this.timelinePanel.remove();
     this.ball.geometry.dispose();
     (this.ball.material as THREE.Material).dispose();
     this.renderer.dispose();
   }
+
+  private bindBallPointerEvents(): void {
+    this.renderer.domElement.addEventListener('pointerdown', this.handleBallPointerDown);
+    this.renderer.domElement.addEventListener('pointermove', this.handleBallPointerMove);
+    this.renderer.domElement.addEventListener('pointerup', this.handleBallPointerUp);
+    this.renderer.domElement.addEventListener('pointercancel', this.handleBallPointerUp);
+  }
+
+  private setCourtPointer(event: PointerEvent): void {
+    const bounds = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+    this.pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
+  }
+
+  private getCourtPoint(event: PointerEvent): THREE.Vector3 | undefined {
+    if (!this.court) return undefined;
+    this.setCourtPointer(event);
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hit = this.raycaster.intersectObject(this.court)[0];
+    return hit?.point;
+  }
+
+  private readonly handleBallPointerDown = (event: PointerEvent): void => {
+    if (this.renderer.domElement.classList.contains('is-annotating')) return;
+    if (this.renderer.domElement.classList.contains('is-moving')) return;
+    this.setCourtPointer(event);
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hit = this.raycaster.intersectObject(this.ball, false)[0];
+    if (!hit) return;
+    const courtHit = this.getCourtPoint(event);
+    if (!courtHit) return;
+    this.ballDragOffset.copy(this.ball.position).sub(courtHit).setY(0);
+    this.isDraggingBall = true;
+    this.controls.enabled = false;
+    this.renderer.domElement.setPointerCapture(event.pointerId);
+    this.renderer.domElement.classList.add('is-dragging');
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+
+  private readonly handleBallPointerMove = (event: PointerEvent): void => {
+    if (!this.isDraggingBall) return;
+    const courtHit = this.getCourtPoint(event);
+    if (!courtHit) return;
+    const pos = courtHit.add(this.ballDragOffset);
+    const ballRadius = 0.24;
+    this.ball.position.set(
+      THREE.MathUtils.clamp(pos.x, -COURT_WIDTH / 2 + ballRadius, COURT_WIDTH / 2 - ballRadius),
+      0.32,
+      THREE.MathUtils.clamp(pos.z, -COURT_DEPTH / 2 + ballRadius, COURT_DEPTH / 2 - ballRadius),
+    );
+  };
+
+  private readonly handleBallPointerUp = (event: PointerEvent): void => {
+    if (!this.isDraggingBall) return;
+    if (this.renderer.domElement.hasPointerCapture(event.pointerId)) {
+      this.renderer.domElement.releasePointerCapture(event.pointerId);
+    }
+    this.isDraggingBall = false;
+    this.controls.enabled = true;
+    this.renderer.domElement.classList.remove('is-dragging');
+  };
 
   private readonly handleResize = (): void => {
     const width = this.root.clientWidth;
@@ -138,44 +201,6 @@ export class BasketballScene {
     ball.castShadow = true;
     ball.name = 'basketball';
     return ball;
-  }
-
-  private createTimelinePanel(): HTMLDivElement {
-    const panel = document.createElement('div');
-    panel.className = 'timeline-panel is-minimized';
-    panel.innerHTML = `
-      <div class="timeline-header"><strong>BROADCAST</strong><button type="button" class="panel-minimize" data-minimize aria-label="Minimizar broadcast">−</button></div>
-      <div class="timeline-controls">
-        <button type="button" data-play>PLAY</button>
-        <label>SPD <select data-speed><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
-        <label><input type="checkbox" data-loop checked /> LOOP</label>
-        <label><input type="checkbox" data-follow /> FOLLOW BALL</label>
-      </div>
-      <div class="timeline-readout"><span data-time>00:00</span><strong data-action>SETUP</strong></div>
-      <p class="live-commentary" data-commentary>Defensa colocada en media pista</p>`;
-    this.root.appendChild(panel);
-    const minimizeButton = panel.querySelector<HTMLButtonElement>('[data-minimize]')!;
-    minimizeButton.textContent = '+';
-    minimizeButton.setAttribute('aria-label', 'Restaurar broadcast');
-    minimizeButton.addEventListener('click', () => {
-      const minimized = panel.classList.toggle('is-minimized');
-      minimizeButton.textContent = minimized ? '+' : '−';
-      minimizeButton.setAttribute('aria-label', minimized ? 'Restaurar broadcast' : 'Minimizar broadcast');
-    });
-    const play = panel.querySelector<HTMLButtonElement>('[data-play]')!;
-    play.addEventListener('click', () => {
-      this.timeline.togglePlay();
-      play.textContent = this.timeline.isPlaying ? 'PAUSE' : 'PLAY';
-    });
-    panel.querySelector<HTMLSelectElement>('[data-speed]')!.addEventListener('change', (event) => this.timeline.setSpeed(Number((event.target as HTMLSelectElement).value)));
-    panel.querySelector<HTMLInputElement>('[data-loop]')!.addEventListener('change', (event) => this.timeline.setLoop((event.target as HTMLInputElement).checked));
-    panel.querySelector<HTMLInputElement>('[data-follow]')!.addEventListener('change', (event) => this.setFollowBall((event.target as HTMLInputElement).checked));
-    this.timeline.subscribe((snapshot) => {
-      panel.querySelector('[data-time]')!.textContent = `${Math.floor(snapshot.timestamp / 60000).toString().padStart(2, '0')}:${Math.floor(snapshot.timestamp / 1000 % 60).toString().padStart(2, '0')}`;
-      panel.querySelector('[data-action]')!.textContent = snapshot.action;
-      panel.querySelector('[data-commentary]')!.textContent = snapshot.commentary;
-    });
-    return panel;
   }
 
   private addLights(): void {
@@ -440,8 +465,6 @@ export class BasketballScene {
     const riserMat = new THREE.MeshStandardMaterial({ color: '#524b43', roughness: 0.96, metalness: 0.0 });
     const fasciaMat = new THREE.MeshStandardMaterial({ color: '#c48a50', roughness: 0.72, metalness: 0.04 });
     const railingMat = new THREE.MeshStandardMaterial({ color: '#2a2620', roughness: 0.78, metalness: 0.38 });
-    const scoreboardMat = new THREE.MeshStandardMaterial({ color: '#6a7278', roughness: 0.6, metalness: 0.3 });
-    const screenMat = new THREE.MeshStandardMaterial({ color: '#0e1216', roughness: 0.2, metalness: 0.1, emissive: '#06101a', emissiveIntensity: 0.15 });
 
     const riserHeight = 0.44;
     const treadDepth = 0.72;
@@ -647,38 +670,6 @@ export class BasketballScene {
       );
       beam.position.set(0, 11 * riserHeight + 1.3, sz * sideExtent);
       this.scene.add(beam);
-    }
-
-    const sbGroup = new THREE.Group();
-    const sbHeight = 3.2;
-    const sbWidth = 4.8;
-    const sbDepth = 3.2;
-    const sbY = 11.5;
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(sbWidth, sbHeight, sbDepth), scoreboardMat);
-    frame.position.y = sbY;
-    sbGroup.add(frame);
-
-    for (const [sx, sz, rY] of [
-      [1, 0, Math.PI / 2],
-      [-1, 0, -Math.PI / 2],
-      [0, 1, 0],
-      [0, -1, Math.PI],
-    ] as const) {
-      const isSide = sx !== 0;
-      const sw = isSide ? sbDepth : sbWidth - 0.2;
-      const sh = sbHeight - 0.3;
-      const screen = new THREE.Mesh(new THREE.BoxGeometry(sw, sh, 0.05), screenMat);
-      screen.position.set(sx * (sbWidth / 2 + 0.02), sbY, sz * (sbDepth / 2 + 0.02));
-      screen.rotation.y = rY;
-      sbGroup.add(screen);
-    }
-    this.scene.add(sbGroup);
-
-    const suspMat = railingMat;
-    for (const [sx, sz] of [[-2.2, -1.4], [2.2, -1.4], [-2.2, 1.4], [2.2, 1.4]] as const) {
-      const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 6, 6), suspMat);
-      cable.position.set(sx, sbY + 3, sz);
-      this.scene.add(cable);
     }
   }
 
