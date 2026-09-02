@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PlayerTokens } from './PlayerTokens';
+import type { TokenRecord } from './PlayerTokens';
 import { Menu } from './Menu';
 import { AnnotationTools } from './AnnotationTools';
+import { Plays, type InterpolatedState } from './Plays';
 import parquetTextureUrl from '../assets/parquet.jpg';
 
 const COURT_WIDTH = 28;
@@ -21,6 +23,8 @@ export class BasketballScene {
   private readonly menu: Menu;
   private readonly annotations: AnnotationTools;
   private readonly ball: THREE.Mesh;
+  private readonly plays: Plays;
+  private readonly playbar: HTMLDivElement;
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly ballDragOffset = new THREE.Vector3();
@@ -72,6 +76,19 @@ export class BasketballScene {
     this.menu = new Menu(root, this.playerTokens);
     this.annotations = new AnnotationTools(root, this.camera, this.renderer.domElement, this.court, this.controls, this.playerTokens, this.ball);
     this.scene.add(this.annotations.object);
+    this.plays = new Plays({
+      getPlayers: () => this.playerTokens.players,
+      getBall: () => ({ x: this.ball.position.x, y: this.ball.position.y, z: this.ball.position.z }),
+      getAnnotations: () => this.annotations.getSnapshots(),
+      apply: (state: InterpolatedState) => this.applyInterpolated(state),
+    });
+    this.plays.on('seek', () => this.plays.applyCurrentFrame());
+    this.plays.on('changed', () => this.renderPlaybar());
+    this.plays.on('seek', () => this.renderPlaybar());
+    this.playbar = this.createPlaybar();
+    root.appendChild(this.playbar);
+    this.renderPlaybar();
+    this.plays.addSnapshot('Frame 1');
     this.addStands();
     this.addPerimeter();
     this.addAtmosphere();
@@ -81,6 +98,8 @@ export class BasketballScene {
 
   public start(): void {
     this.renderer.setAnimationLoop(() => {
+      const nowMs = performance.now();
+      this.plays.update(nowMs);
       if (this.followBall) this.cameraTarget.lerp(this.ball.position, 0.12);
       else this.cameraTarget.lerp(this.controls.target, 0.12);
       this.controls.target.copy(this.cameraTarget);
@@ -107,6 +126,190 @@ export class BasketballScene {
     this.parallaxTarget.set(x * 0.45, 0, y * 0.28);
   }
 
+  private applyAnnotationMotionHints(): void {
+    const annotations = this.annotations.getSnapshots();
+    const records = this.playerTokens.records;
+    const getRecord = (id?: string): TokenRecord | undefined => records.find((r) => r.player.id === id);
+    const findNearest = (p: { x: number; z: number }, excludeId?: string): TokenRecord | undefined => {
+      let best: TokenRecord | undefined;
+      let bestDist = Infinity;
+      for (const r of records) {
+        if (excludeId && r.player.id === excludeId) continue;
+        const dx = r.mesh.position.x - p.x;
+        const dz = r.mesh.position.z - p.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestDist) {
+          bestDist = d2;
+          best = r;
+        }
+      }
+      return best;
+    };
+    const clampPos = (x: number, z: number, pad = 0.42): [number, number] => [
+      THREE.MathUtils.clamp(x, -COURT_WIDTH / 2 + pad, COURT_WIDTH / 2 - pad),
+      THREE.MathUtils.clamp(z, -COURT_DEPTH / 2 + pad, COURT_DEPTH / 2 - pad),
+    ];
+    const movePlayerTo = (rec: TokenRecord, p: { x: number; z: number }): void => {
+      const [x, z] = clampPos(p.x, p.z);
+      rec.mesh.position.set(x, 0.18, z);
+      rec.player.position.x = x;
+      rec.player.position.z = z;
+    };
+    const placeBallNextTo = (p: { x: number; z: number }): void => {
+      const side = Math.sign(p.x) || 1;
+      const q = Math.sign(p.z) || 1;
+      const [x, z] = clampPos(p.x + side * 0.72, p.z + q * 0.42, 0.2);
+      this.ball.position.set(x, 0.32, z);
+    };
+    for (const a of annotations) {
+      const last = a.points[a.points.length - 1];
+      const rec = getRecord(a.startPlayerId);
+      switch (a.mode) {
+        case 'cut':
+        case 'dribble':
+        case 'handoff': {
+          if (rec) movePlayerTo(rec, last);
+          if (a.mode !== 'cut') placeBallNextTo(last);
+          if (a.mode === 'handoff') {
+            const nearest = findNearest(last, rec?.player.id);
+            if (nearest) movePlayerTo(nearest, last);
+          }
+          break;
+        }
+        case 'screen': {
+          if (rec) movePlayerTo(rec, last);
+          break;
+        }
+        case 'pass': {
+          const endpoint = { x: last.x, z: last.z };
+          const nearest = findNearest(endpoint, rec?.player.id);
+          if (nearest) movePlayerTo(nearest, endpoint);
+          placeBallNextTo(endpoint);
+          break;
+        }
+        case 'shot': {
+          this.ball.position.set(last.x, Math.max(3.05, last.y), last.z);
+          break;
+        }
+      }
+    }
+  }
+
+  private applyInterpolated(state: InterpolatedState): void {
+    const records = this.playerTokens.records;
+    for (const p of state.players) {
+      const record = records.find((r: TokenRecord) => r.player.id === p.id);
+      if (!record) continue;
+      const x = THREE.MathUtils.clamp(p.position.x, -COURT_WIDTH / 2 + 0.42, COURT_WIDTH / 2 - 0.42);
+      const z = THREE.MathUtils.clamp(p.position.z, -COURT_DEPTH / 2 + 0.42, COURT_DEPTH / 2 - 0.42);
+      record.mesh.position.set(x, 0.18, z);
+      record.player.position.x = x;
+      record.player.position.z = z;
+    }
+    this.ball.position.set(
+      THREE.MathUtils.clamp(state.ball.x, -COURT_WIDTH / 2 + 0.2, COURT_WIDTH / 2 - 0.2),
+      Math.max(0.12, state.ball.y),
+      THREE.MathUtils.clamp(state.ball.z, -COURT_DEPTH / 2 + 0.2, COURT_DEPTH / 2 - 0.2),
+    );
+    this.annotations.restoreSnapshots(state.annotations);
+  }
+
+  private createPlaybar(): HTMLDivElement {
+    const bar = document.createElement('div');
+    bar.className = 'playbar';
+    bar.innerHTML = `
+      <button data-action="prev" title="Previous keyframe" aria-label="Previous">◀◀</button>
+      <button data-action="play" title="Play/Pause" aria-label="Play/Pause">▶</button>
+      <button data-action="next" title="Next keyframe" aria-label="Next">▶▶</button>
+      <div class="playbar-chips" data-chips></div>
+      <div class="playbar-spacer"></div>
+      <div class="playbar-fps" title="Frames per second">
+        <span>FPS</span>
+        <button data-action="fps-down">−</button>
+        <span data-fps-readout>4</span>
+        <button data-action="fps-up">+</button>
+      </div>
+      <button data-action="apply" title="Move players & ball to where annotations say they should land (no save)">⇥ APPLY HINTS</button>
+      <button data-action="add" class="playbar-primary" title="Apply hints, then save current scene as keyframe">+ ADD FRAME</button>
+      <button data-action="duplicate" title="Duplicate current keyframe" aria-label="Duplicate">⎘</button>
+      <button data-action="delete" title="Delete current keyframe" aria-label="Delete">🗑</button>
+      <button data-action="clear" title="Remove all keyframes" aria-label="Clear all">⌫ All</button>
+      <div class="playbar-counter" data-counter>0 / 0</div>
+    `;
+    bar.addEventListener('click', (ev) => {
+      const target = ev.target as HTMLElement;
+      const action = target.getAttribute('data-action');
+      const chip = target.getAttribute('data-chip-index');
+      if (chip !== null) {
+        this.plays.goTo(Number(chip));
+        this.renderPlaybar();
+        return;
+      }
+      if (!action) return;
+      switch (action) {
+        case 'apply':
+          this.applyAnnotationMotionHints();
+          break;
+        case 'add':
+          this.applyAnnotationMotionHints();
+          this.plays.addSnapshot();
+          this.annotations.clearAllAnnotations();
+          break;
+        case 'duplicate':
+          this.plays.duplicateAt(this.plays.currentIndex);
+          break;
+        case 'delete':
+          this.plays.deleteAt(this.plays.currentIndex);
+          break;
+        case 'clear':
+          if (this.plays.length) {
+            this.plays.clear();
+            this.annotations.clearAllAnnotations();
+          }
+          break;
+        case 'prev':
+          this.plays.prev();
+          break;
+        case 'play':
+          this.plays.toggle();
+          break;
+        case 'next':
+          this.plays.next();
+          break;
+        case 'fps-down':
+          this.plays.setFps(Math.max(1, this.plays.fps - 1));
+          break;
+        case 'fps-up':
+          this.plays.setFps(Math.min(24, this.plays.fps + 1));
+          break;
+      }
+      this.renderPlaybar();
+    });
+    return bar;
+  }
+
+  private renderPlaybar(): void {
+    const bar = this.playbar;
+    const chipsContainer = bar.querySelector<HTMLDivElement>('[data-chips]');
+    const counter = bar.querySelector<HTMLDivElement>('[data-counter]');
+    const fpsReadout = bar.querySelector<HTMLSpanElement>('[data-fps-readout]');
+    const playBtn = bar.querySelector<HTMLButtonElement>('[data-action="play"]');
+    if (chipsContainer) {
+      chipsContainer.innerHTML = '';
+      this.plays.list.forEach((frame, index) => {
+        const chip = document.createElement('button');
+        chip.className = 'playbar-chip' + (index === this.plays.currentIndex ? ' is-current' : '');
+        chip.setAttribute('data-chip-index', String(index));
+        chip.title = frame.label;
+        chip.textContent = String(index + 1);
+        chipsContainer.appendChild(chip);
+      });
+    }
+    if (counter) counter.textContent = `${this.plays.length ? this.plays.currentIndex + 1 : 0} / ${this.plays.length}`;
+    if (fpsReadout) fpsReadout.textContent = String(this.plays.fps);
+    if (playBtn) playBtn.textContent = this.plays.isPlaying ? '❚❚' : '▶';
+  }
+
   public dispose(): void {
     window.removeEventListener('resize', this.handleResize);
     this.renderer.setAnimationLoop(null);
@@ -120,6 +323,7 @@ export class BasketballScene {
     this.annotations.dispose();
     this.ball.geometry.dispose();
     (this.ball.material as THREE.Material).dispose();
+    this.playbar.remove();
     this.renderer.dispose();
   }
 

@@ -80,6 +80,55 @@ export class AnnotationTools {
     return this.annotations;
   }
 
+  public clearAllAnnotations(): void {
+    this.clearSelection();
+    while (this.annotations.children.length > 0) {
+      const child = this.annotations.children[this.annotations.children.length - 1];
+      if (child.userData.isPreview) {
+        this.annotations.remove(child);
+        continue;
+      }
+      this.annotations.remove(child);
+      child.traverse((object) => {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.LineSegments) {
+          object.geometry?.dispose();
+          const mat = object.material;
+          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+          else mat?.dispose();
+        }
+      });
+    }
+  }
+
+  public getSnapshots(): Array<{ mode: string; points: Array<{ x: number; y: number; z: number }>; startPlayerId?: string }> {
+    const out: Array<{ mode: string; points: Array<{ x: number; y: number; z: number }>; startPlayerId?: string }> = [];
+    for (const child of this.annotations.children) {
+      if (child.userData.isPreview) continue;
+      const mode = child.userData.annotationMode as string | undefined;
+      const points = child.userData.points as THREE.Vector3[] | undefined;
+      if (!mode || !points) continue;
+      const startPlayerId = child.userData.startPlayerId as string | undefined;
+      out.push({ mode, points: points.map((p) => ({ x: p.x, y: p.y, z: p.z })), ...(startPlayerId ? { startPlayerId } : {}) });
+    }
+    return out;
+  }
+
+  public restoreSnapshots(list: Array<{ mode: string; points: Array<{ x: number; y: number; z: number }>; startPlayerId?: string }>): void {
+    this.clearAllAnnotations();
+    for (const entry of list) {
+      const style = ANNOTATION_STYLES[entry.mode as keyof typeof ANNOTATION_STYLES];
+      if (!style) continue;
+      const points = entry.points.map((p) => new THREE.Vector3(p.x, p.y, p.z));
+      if (points.length < 2) continue;
+      const group = this.createAnnotationVisual(points, style, entry.mode as AnnotationMode, false);
+      group.userData.annotationMode = entry.mode;
+      group.userData.points = points.map((p) => p.clone());
+      group.userData.isPreview = false;
+      if (entry.startPlayerId) group.userData.startPlayerId = entry.startPlayerId;
+      this.annotations.add(group);
+    }
+  }
+
   public dispose(): void {
     this.domElement.removeEventListener('pointerdown', this.handlePointerDown);
     this.domElement.removeEventListener('pointermove', this.handlePointerMove);
@@ -255,6 +304,7 @@ export class AnnotationTools {
     this.removePreview();
     if (endPoint && this.startPoint.distanceTo(endPoint) > 0.25) {
       const annotation = this.createAnnotation(this.startPoint, endPoint, ANNOTATION_STYLES[mode], mode);
+      if (this.startToken) annotation.userData.startPlayerId = this.startToken.player.id;
       this.annotations.add(annotation);
     }
     if (this.domElement.hasPointerCapture(event.pointerId)) this.domElement.releasePointerCapture(event.pointerId);

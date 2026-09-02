@@ -87,3 +87,90 @@ h1 span { color: #d7f34a; }
 .intro-active .hud { display: none; }
 .intro-active .annotation-toolbar { visibility: hidden; pointer-events: none; }
 @media (max-width: 600px) { .hud-meta { flex-direction: column; gap: 6px; } }
+
+.playbar {
+  position: fixed;
+  z-index: 6;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  max-width: calc(100vw - 48px);
+  min-height: 48px;
+  border: 1px solid rgba(241, 245, 236, 0.16);
+  border-radius: 12px;
+  background: rgba(7, 18, 22, 0.92);
+  box-shadow: 0 22px 52px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+  color: #f1f5ec;
+  font-family: 'Space Mono', monospace;
+}
+.playbar button {
+  border: 1px solid rgba(241, 245, 236, 0.14);
+  background: #253247;
+  color: #f1f5ec;
+  min-width: 34px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: 700 10px 'Space Mono', monospace;
+  letter-spacing: 0.04em;
+  transition: all 120ms ease;
+}
+.playbar button:hover { background: #32405a; }
+.playbar button.playbar-primary { background: #d7f34a; color: #081015; border-color: rgba(215, 243, 74, 0.8); }
+.playbar button.playbar-primary:hover { background: #e1ff59; }
+.playbar-spacer { flex: 0 0 10px; }
+.playbar-chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 320px;
+  overflow-x: auto;
+  padding: 2px 4px 2px 2px;
+}
+.playbar-chip {
+  min-width: 32px !important;
+  height: 26px !important;
+  padding: 0 7px !important;
+  border-radius: 999px !important;
+  font-size: 10px !important;
+  background: #2c3a53 !important;
+  flex: 0 0 auto;
+}
+.playbar-chip.is-current { background: #d7f34a !important; color: #081015 !important; border-color: rgba(215, 243, 74, 0.9) !important; }
+.playbar-fps {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #b9c5ce;
+}
+.playbar-fps button {
+  min-width: 24px !important;
+  width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+  line-height: 1;
+}
+.playbar-fps [data-fps-readout] {
+  min-width: 22px;
+  text-align: center;
+  color: #f1f5ec;
+  font-weight: 700;
+}
+.playbar-counter {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: #88a0b0;
+  padding-left: 6px;
+  border-left: 1px solid rgba(241, 245, 236, 0.1);
+  min-width: 52px;
+  text-align: right;
+}
